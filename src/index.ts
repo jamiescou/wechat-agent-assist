@@ -78,51 +78,43 @@ app.post('/', async (req: Request, res: Response) => {
       setTimeout(() => global.processedMsgIds.delete(msgId), 60000); // Clear after 1 minute
     }
 
-    // Important: We must NOT wait for the AI task if we want to return 'success' quickly.
-    // However, the Promise.race logic below handles the timeout.
-
-    let isResponseSent = false;
-
-    // 2. Create the AI Task
-    // We wrap it to handle the "Late Reply" scenario
-    const aiTask = WeChatService.processMessage(message).then(async (reply) => {
-      // Log the reply for debugging
-      console.log('AI Task Finished. Reply:', JSON.stringify(reply, null, 2));
-
-      if (!isResponseSent) {
-        // If we haven't timed out, return the reply to the main flow
-        return reply;
-      } else {
-        // Timeout happened, HTTP response is already sent.
-        // We must send the result via Custom Service Message
-        console.log('Response timed out. Sending via Custom Message API...');
-        await WeChatService.sendCustomMessage(message.FromUserName, reply);
-        return null; // Return null to indicate handled
-      }
-    });
+    // 2. Create the AI Task Promise
+    const aiPromise = WeChatService.processMessage(message);
 
     // 3. Create Timeout Promise
+    let timedOut = false;
     const timeoutPromise = new Promise<null>((resolve) => {
       setTimeout(() => {
-        resolve(null); // Resolve with null to indicate timeout
+        timedOut = true;
+        resolve(null);
       }, CONFIG.TIMEOUT_MS);
     });
 
     // 4. Race
-    const winner = await Promise.race([aiTask, timeoutPromise]);
+    const winner = await Promise.race([aiPromise, timeoutPromise]);
 
-    if (winner) {
-      // AI finished in time
-      isResponseSent = true;
-      const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner);
+    if (!timedOut && winner) {
+      // Case A: AI finished BEFORE timeout
+      console.log('AI finished in time. Sending synchronous XML response.');
+      const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner as any);
       res.type('application/xml');
       res.send(xmlResponse);
     } else {
-      // Timeout won
-      isResponseSent = true;
-      console.log('Processing timed out. Returning empty success to WeChat.');
+      // Case B: Timeout happened OR AI failed to return valid data in time
+      console.log('Processing timed out or slow. Sending empty success to WeChat.');
       res.send('success');
-      // aiTask continues in background
+
+      // Handle Late Reply (Async)
+      // We wait for the AI promise to finish (if it hasn't already)
+      aiPromise.then(async (reply) => {
+        console.log('AI Task Finished (Late). Reply:', JSON.stringify(reply, null, 2));
+        if (reply) {
+          console.log('Sending via Custom Message API...');
+          await WeChatService.sendCustomMessage(message.FromUserName, reply);
+        }
+      }).catch(err => {
+        console.error('AI Task Failed in background:', err);
+      });
     }
 
   } catch (error) {
