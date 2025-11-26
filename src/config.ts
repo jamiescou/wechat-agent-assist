@@ -12,7 +12,8 @@ export const CONFIG = {
   AI_API_KEY: '6fe6a33671d1b548f1c9c2e8f4e8a617', // Replace with your actual key
 
   // Timeout to prevent WeChat from reporting service unavailable (WeChat waits max 5s)
-  TIMEOUT_MS: 60000,
+  // Set to 4500ms to ensure response within WeChat's 5s limit
+  TIMEOUT_MS: 4500,
 
   // Optional: For sending native Image messages (requires Service Account or Test Account)
   WECHAT_APPID: 'wx73fa5e07886d03e9',

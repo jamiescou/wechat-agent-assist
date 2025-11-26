@@ -95,25 +95,28 @@ app.post('/', async (req: Request, res: Response) => {
 
     if (!timedOut && winner) {
       // Case A: AI finished BEFORE timeout
-      console.log('AI finished in time. Sending synchronous XML response.');
+      console.log('✓ AI finished in time. Sending synchronous XML response.');
       const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner as any);
       res.type('application/xml');
       res.send(xmlResponse);
     } else {
       // Case B: Timeout happened OR AI failed to return valid data in time
-      console.log('Processing timed out or slow. Sending empty success to WeChat.');
+      console.log(`⏱ Processing exceeded ${CONFIG.TIMEOUT_MS}ms timeout. Using async reply.`);
       res.send('success');
 
       // Handle Late Reply (Async)
       // We wait for the AI promise to finish (if it hasn't already)
       aiPromise.then(async (reply) => {
-        console.log('AI Task Finished (Late). Reply:', JSON.stringify(reply, null, 2));
+        console.log('AI Task Finished (Late):', reply?.type || 'no reply');
         if (reply) {
-          console.log('Sending via Custom Message API...');
+          console.log('→ Sending via Custom Message API (async)...');
           await WeChatService.sendCustomMessage(message.FromUserName, reply);
+          console.log('✓ Async message sent successfully');
+        } else {
+          console.warn('⚠ AI returned empty reply, skipping async message');
         }
       }).catch(err => {
-        console.error('AI Task Failed in background:', err);
+        console.error('✗ AI Task Failed in background:', err.message || err);
       });
     }
 

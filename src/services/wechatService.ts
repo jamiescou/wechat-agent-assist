@@ -93,35 +93,49 @@ const getAccessToken = async (): Promise<string> => {
 };
 
 const uploadTempMedia = async (imageUrl: string): Promise<string> => {
-  console.log('uploadTempMedia==', imageUrl);
-  if (!CONFIG.WECHAT_APPID || !CONFIG.WECHAT_APPSECRET) return '';
+  console.log('uploadTempMedia - Starting upload for:', imageUrl);
+  if (!CONFIG.WECHAT_APPID || !CONFIG.WECHAT_APPSECRET) {
+    console.warn('WeChat credentials not configured');
+    return '';
+  }
   const token = await getAccessToken();
-  console.log('uploadTempMedia==token=', token);
-  if (!token) return '';
+  if (!token) {
+    console.error('Failed to get access token');
+    return '';
+  }
 
   try {
-    // 1. Download the image
-    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    // 1. Download the image with timeout
+    console.log('Downloading image from:', imageUrl);
+    const imageResponse = await axios.get(imageUrl, {
+      responseType: 'arraybuffer',
+      timeout: 10000 // 10s timeout for download
+    });
     const buffer = Buffer.from(imageResponse.data, 'binary');
-    console.log('uploadTempMedia==buffer=', buffer);
-    // 2. Upload to WeChat
-    // NOTE: In a real project, ensure 'form-data' is installed: npm install form-data
-    // Here we will try to use it if available, or fail gracefully.
+    console.log('Image downloaded, size:', buffer.length, 'bytes');
+
+    // 2. Upload to WeChat with timeout
     const FormData = require('form-data');
     const form = new FormData();
     form.append('media', buffer, { filename: 'image.jpg', contentType: 'image/jpeg' });
 
     const uploadUrl = `https://api.weixin.qq.com/cgi-bin/media/upload?access_token=${token}&type=image`;
+    console.log('Uploading to WeChat...');
     const res = await axios.post(uploadUrl, form, {
-      headers: form.getHeaders()
+      headers: form.getHeaders(),
+      timeout: 10000 // 10s timeout for upload
     });
-    console.log('uploadTempMedia==res=', res.data);
+
     if (res.data.media_id) {
+      console.log('Upload successful, media_id:', res.data.media_id);
       return res.data.media_id;
     }
     console.error('WeChat Upload Error:', res.data);
   } catch (e: any) {
     console.error('Failed to upload media:', e.message);
+    if (e.code === 'ECONNABORTED') {
+      console.error('Upload timeout - image too large or network slow');
+    }
   }
   return '';
 };
@@ -175,33 +189,35 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChat
     // Handling Image-to-Image
     const imgMsg = msg as any;
     const picUrl = imgMsg.PicUrl;
+    console.log('Processing image from user, PicUrl:', picUrl);
     // Send image to AI for analysis/modification
     replyContent = await AIService.chatWithAI('请分析这张图片', picUrl);
   } else {
     replyContent = 'Unsupported message type.';
   }
-  console.log('replyContent==', replyContent);
+
+  console.log('AI Response:', replyContent);
+
   // Post-processing: Check for Markdown Images in the response
   // Example: ![image](https://...)
   // We only take the FIRST image if multiple are returned.
   const imgMatch = replyContent.match(/!\[.*?\]\((.*?)\)/);
-  console.log('imgMatch==', imgMatch);
+
   if (imgMatch) {
     const imgUrl = imgMatch[1];
-    console.log('imgUrl==', imgUrl);
+    console.log('Detected image URL in response:', imgUrl);
+
     // Try to upload to WeChat to send as native Image
     mediaId = await uploadTempMedia(imgUrl);
-    console.log('mediaId==', mediaId);
 
     if (!mediaId) {
-      // Fallback: Format the text nicely
-      // If upload failed, we just show the link for the first image
-      replyContent = `【图片生成成功】\n点击查看: ${imgUrl}`;
+      // Fallback: Format the text nicely with clickable link
+      console.log('Image upload failed, falling back to text with URL');
+      replyContent = `【图片已生成】\n\n由于网络原因，暂时无法直接发送图片。\n\n请点击查看：${imgUrl}`;
+    } else {
+      // Successfully uploaded, will send as image
+      console.log('Image uploaded successfully, media_id:', mediaId);
     }
-  } else {
-    // No image found, just return text
-    // If there is too much text (like "Here is your image..."), we might want to clean it up?
-    // For now, keep it as is.
   }
 
   // Construct Reply Object
