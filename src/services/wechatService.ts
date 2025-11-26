@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import xml2js from 'xml2js';
 import { CONFIG } from '../config';
-import { WeChatReceivedMessage } from '../types';
+import { WeChatReceivedMessage, WeChatReply } from '../types';
 import * as AIService from './aiService';
 
 // XML Parser and Builder
@@ -62,6 +62,13 @@ export const buildImageResponse = (toUser: string, fromUser: string, mediaId: st
   return builder.buildObject(obj);
 };
 
+export const replyToXml = (toUser: string, fromUser: string, reply: WeChatReply): string => {
+  if (reply.type === 'image' && reply.mediaId) {
+    return buildImageResponse(toUser, fromUser, reply.mediaId);
+  }
+  return buildTextResponse(toUser, fromUser, reply.content || '');
+};
+
 // Access Token Cache (Simple In-Memory)
 let accessToken: string = '';
 let tokenExpiresAt: number = 0;
@@ -78,6 +85,7 @@ const getAccessToken = async (): Promise<string> => {
       tokenExpiresAt = Date.now() + (res.data.expires_in - 200) * 1000;
       return accessToken;
     }
+    console.error('WeChat Token Error:', res.data);
   } catch (e) {
     console.error('Failed to get Access Token', e);
   }
@@ -85,21 +93,72 @@ const getAccessToken = async (): Promise<string> => {
 };
 
 const uploadTempMedia = async (imageUrl: string): Promise<string> => {
-  // Placeholder: Requires 'form-data' and valid AppID/Secret
-  // If you have AppID, implement the upload logic here to get MediaId
+  if (!CONFIG.WECHAT_APPID || !CONFIG.WECHAT_APPSECRET) return '';
   const token = await getAccessToken();
   if (!token) return '';
 
-  // Logic to download image and upload to https://api.weixin.qq.com/cgi-bin/media/upload?access_token=ACCESS_TOKEN&type=image
-  // Return media_id
+  try {
+    // 1. Download the image
+    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(imageResponse.data, 'binary');
+
+    // 2. Upload to WeChat
+    // NOTE: In a real project, ensure 'form-data' is installed: npm install form-data
+    // Here we will try to use it if available, or fail gracefully.
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('media', buffer, { filename: 'image.jpg', contentType: 'image/jpeg' });
+
+    const uploadUrl = `https://api.weixin.qq.com/cgi-bin/media/upload?access_token=${token}&type=image`;
+    const res = await axios.post(uploadUrl, form, {
+      headers: form.getHeaders()
+    });
+
+    if (res.data.media_id) {
+      return res.data.media_id;
+    }
+    console.error('WeChat Upload Error:', res.data);
+  } catch (e: any) {
+    console.error('Failed to upload media:', e.message);
+  }
   return '';
 };
 
 /**
- * Main Logic to handle the message content
+ * Sends a Custom Service Message (Kefu Message)
+ * Used for async replies when the 5s timeout is exceeded.
  */
-export const processMessage = async (msg: WeChatReceivedMessage): Promise<string> => {
-  const { FromUserName, ToUserName, MsgType } = msg;
+export const sendCustomMessage = async (toUser: string, reply: WeChatReply): Promise<void> => {
+  const token = await getAccessToken();
+  if (!token) return;
+
+  const url = `https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token=${token}`;
+
+  let body: any = {
+    touser: toUser,
+    msgtype: reply.type
+  };
+
+  if (reply.type === 'text') {
+    body.text = { content: reply.content };
+  } else if (reply.type === 'image') {
+    body.image = { media_id: reply.mediaId };
+  }
+
+  try {
+    const res = await axios.post(url, body);
+    console.log('Custom Message Sent:', res.data);
+  } catch (e: any) {
+    console.error('Failed to send Custom Message:', e.message);
+  }
+};
+
+/**
+ * Main Logic to handle the message content
+ * Returns a structured reply object instead of XML string
+ */
+export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChatReply> => {
+  const { MsgType } = msg;
 
   let replyContent = '';
   let mediaId = '';
@@ -107,10 +166,6 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<string
   if (MsgType === 'text') {
     const textMsg = msg as any;
     const content = textMsg.Content.trim();
-
-    // Check for explicit Image Generation Command if needed, 
-    // but we prefer the Chat endpoint's natural ability.
-    // However, if the user explicitly says "generate image of...", we can still pass it to chat.
 
     replyContent = await AIService.chatWithAI(content);
 
@@ -134,17 +189,15 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<string
 
     if (!mediaId) {
       // Fallback: Format the text nicely
-      // Remove the markdown syntax and present a clean link
       replyContent = replyContent.replace(/!\[(.*?)\]\((.*?)\)/g, '\n【图片】$1: $2\n');
-      // Also clean up the "Original Image" text if it's redundant or messy
-      replyContent = replyContent.replace(/原图:\s*https?:\/\/.*?\n?/g, ''); // Optional cleanup
+      replyContent = replyContent.replace(/原图:\s*https?:\/\/.*?\n?/g, '');
     }
   }
 
-  // Construct XML
+  // Construct Reply Object
   if (mediaId) {
-    return buildImageResponse(FromUserName, ToUserName, mediaId);
+    return { type: 'image', mediaId };
   } else {
-    return buildTextResponse(FromUserName, ToUserName, replyContent);
+    return { type: 'text', content: replyContent };
   }
 };

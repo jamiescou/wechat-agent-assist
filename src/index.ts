@@ -51,34 +51,45 @@ app.post('/', async (req: Request, res: Response) => {
     }
 
     const message = result.xml;
+    let isResponseSent = false;
 
-    // 2. Process Message with AI (Race against timeout)
-    // WeChat expects a response within 5 seconds.
-
-    // Create a promise that rejects after timeout safety margin
-    const timeoutPromise = new Promise<string>((_, reject) => {
-      setTimeout(() => reject(new Error('TIMEOUT')), CONFIG.TIMEOUT_MS);
+    // 2. Create the AI Task
+    // We wrap it to handle the "Late Reply" scenario
+    const aiTask = WeChatService.processMessage(message).then(async (reply) => {
+      if (!isResponseSent) {
+        // If we haven't timed out, return the reply to the main flow
+        return reply;
+      } else {
+        // Timeout happened, HTTP response is already sent.
+        // We must send the result via Custom Service Message
+        console.log('Response timed out. Sending via Custom Message API...');
+        await WeChatService.sendCustomMessage(message.FromUserName, reply);
+        return null; // Return null to indicate handled
+      }
     });
 
-    try {
-      // Race the processing against the timeout
-      const responseXml = await Promise.race([
-        WeChatService.processMessage(message),
-        timeoutPromise
-      ]);
+    // 3. Create Timeout Promise
+    const timeoutPromise = new Promise<null>((resolve) => {
+      setTimeout(() => {
+        resolve(null); // Resolve with null to indicate timeout
+      }, CONFIG.TIMEOUT_MS);
+    });
 
-      // 3. Send XML Response
+    // 4. Race
+    const winner = await Promise.race([aiTask, timeoutPromise]);
+
+    if (winner) {
+      // AI finished in time
+      isResponseSent = true;
+      const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner);
       res.type('application/xml');
-      res.send(responseXml);
-
-    } catch (err: any) {
-      if (err.message === 'TIMEOUT') {
-        console.error('Processing timed out. Returning empty success to WeChat to avoid retry loop.');
-        // If we timeout, we must strictly return "success" or empty string to stop WeChat from retrying 3 times.
-        res.send('success');
-      } else {
-        throw err;
-      }
+      res.send(xmlResponse);
+    } else {
+      // Timeout won
+      isResponseSent = true;
+      console.log('Processing timed out. Returning empty success to WeChat.');
+      res.send('success');
+      // aiTask continues in background
     }
 
   } catch (error) {

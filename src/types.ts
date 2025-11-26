@@ -38,3 +38,9 @@ export interface AIImageResponse {
     url: string;
   }>;
 }
+
+export interface WeChatReply {
+  type: 'text' | 'image';
+  content?: string;
+  mediaId?: string;
+}
