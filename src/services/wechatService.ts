@@ -170,6 +170,33 @@ export const sendCustomMessage = async (toUser: string, reply: WeChatReply): Pro
 };
 
 /**
+ * Detects if the user wants to generate an image
+ */
+const isImageGenerationRequest = (text: string): boolean => {
+  const keywords = [
+    '画', '生成图片', '生成一张', '画一张', '画个', '画只', '画幅',
+    '绘制', '创作', '设计', 'draw', 'generate image', '帮我画',
+    '给我画', '来一张', '生成', '制作图片'
+  ];
+
+  const lowerText = text.toLowerCase();
+  return keywords.some(keyword => lowerText.includes(keyword));
+};
+
+/**
+ * Extracts the image generation prompt from user message
+ */
+const extractImagePrompt = (text: string): string => {
+  // Remove common prefixes
+  let prompt = text
+    .replace(/^(请|帮我|给我|来|生成|绘制|创作|设计|制作)?画(一张|一幅|一个|个|只|幅)?/i, '')
+    .replace(/^(请|帮我|给我)?(生成|绘制|创作|设计|制作)(一张|一幅|一个|个)?图片?/i, '')
+    .trim();
+
+  return prompt || text; // Fallback to original if extraction fails
+};
+
+/**
  * Main Logic to handle the message content
  * Returns a structured reply object instead of XML string
  */
@@ -177,19 +204,30 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChat
   const { MsgType } = msg;
 
   let replyContent = '';
-  let mediaId = '';
 
   if (MsgType === 'text') {
     const textMsg = msg as any;
     const content = textMsg.Content.trim();
 
-    replyContent = await AIService.chatWithAI(content);
+    // Check if this is an image generation request
+    if (isImageGenerationRequest(content)) {
+      console.log('🎨 Detected image generation request');
+      const imagePrompt = extractImagePrompt(content);
+      console.log('📝 Extracted prompt:', imagePrompt);
+
+      // Call image generation API
+      replyContent = await AIService.generateImage(imagePrompt);
+    } else {
+      console.log('💬 Processing as chat message');
+      // Normal chat
+      replyContent = await AIService.chatWithAI(content);
+    }
 
   } else if (MsgType === 'image') {
     // Handling Image-to-Image
     const imgMsg = msg as any;
     const picUrl = imgMsg.PicUrl;
-    console.log('Processing image from user, PicUrl:', picUrl);
+    console.log('🖼 Processing image from user, PicUrl:', picUrl);
     // Send image to AI for analysis/modification
     replyContent = await AIService.chatWithAI('请分析这张图片', picUrl);
   } else {
