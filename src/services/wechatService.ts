@@ -183,20 +183,25 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChat
   console.log('replyContent==', replyContent);
   // Post-processing: Check for Markdown Images in the response
   // Example: ![image](https://...)
+  // We only take the FIRST image if multiple are returned.
   const imgMatch = replyContent.match(/!\[.*?\]\((.*?)\)/);
   console.log('imgMatch==', imgMatch);
   if (imgMatch) {
     const imgUrl = imgMatch[1];
-    console.log('imgUrl==', imgUrl, imgMatch[1]);
+    console.log('imgUrl==', imgUrl);
     // Try to upload to WeChat to send as native Image
     mediaId = await uploadTempMedia(imgUrl);
     console.log('mediaId==', mediaId);
 
     if (!mediaId) {
       // Fallback: Format the text nicely
-      replyContent = replyContent.replace(/!\[(.*?)\]\((.*?)\)/g, '\n【图片】$1: $2\n');
-      replyContent = replyContent.replace(/原图:\s*https?:\/\/.*?\n?/g, '');
+      // If upload failed, we just show the link for the first image
+      replyContent = `【图片生成成功】\n点击查看: ${imgUrl}`;
     }
+  } else {
+    // No image found, just return text
+    // If there is too much text (like "Here is your image..."), we might want to clean it up?
+    // For now, keep it as is.
   }
 
   // Construct Reply Object

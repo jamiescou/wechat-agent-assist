@@ -77,13 +77,19 @@ app.post('/', async (req: Request, res: Response) => {
       // Optional: Cleanup old IDs periodically or use a LRU cache
       setTimeout(() => global.processedMsgIds.delete(msgId), 60000); // Clear after 1 minute
     }
+
+    // Important: We must NOT wait for the AI task if we want to return 'success' quickly.
+    // However, the Promise.race logic below handles the timeout.
+
     let isResponseSent = false;
 
     // 2. Create the AI Task
     // We wrap it to handle the "Late Reply" scenario
     const aiTask = WeChatService.processMessage(message).then(async (reply) => {
+      // Log the reply for debugging
+      console.log('AI Task Finished. Reply:', JSON.stringify(reply, null, 2));
+
       if (!isResponseSent) {
-        console.log('Response sent successfully', reply);
         // If we haven't timed out, return the reply to the main flow
         return reply;
       } else {
