@@ -122,7 +122,9 @@ app.post('/', async (req: Request, res: Response) => {
       // Clean up old cache entries (keep last 100)
       if (global.responseCache.size > 100) {
         const firstKey = global.responseCache.keys().next().value;
-        global.responseCache.delete(firstKey);
+        if (firstKey) {
+          global.responseCache.delete(firstKey);
+        }
       }
 
       const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner as any);
