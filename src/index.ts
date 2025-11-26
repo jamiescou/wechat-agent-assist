@@ -2,6 +2,11 @@ import express, { Request, Response } from 'express';
 import { CONFIG } from './config';
 import * as WeChatService from './services/wechatService';
 
+// Extend global type
+declare global {
+  var processedMsgIds: Set<string>;
+}
+
 const app = express();
 
 // Middleware to handle raw XML body
@@ -45,6 +50,13 @@ app.post('/', async (req: Request, res: Response) => {
     return res.send('success');
   }
 
+  // Deduplication Cache
+  // We use a simple Set to store recently processed MsgIds.
+  // In production, use Redis or a more robust solution with TTL.
+  if (!global.processedMsgIds) {
+    global.processedMsgIds = new Set<string>();
+  }
+
   try {
     // 1. Parse XML
     const result = await WeChatService.parseXML(xmlData);
@@ -53,6 +65,18 @@ app.post('/', async (req: Request, res: Response) => {
     }
 
     const message = result.xml;
+    const msgId = message.MsgId;
+
+    if (msgId && global.processedMsgIds.has(msgId)) {
+      console.log(`Duplicate message ${msgId} detected. Ignoring.`);
+      return res.send('success');
+    }
+
+    if (msgId) {
+      global.processedMsgIds.add(msgId);
+      // Optional: Cleanup old IDs periodically or use a LRU cache
+      setTimeout(() => global.processedMsgIds.delete(msgId), 60000); // Clear after 1 minute
+    }
     let isResponseSent = false;
 
     // 2. Create the AI Task
