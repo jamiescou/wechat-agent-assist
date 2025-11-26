@@ -199,31 +199,31 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChat
   console.log('AI Response:', replyContent);
 
   // Post-processing: Check for Markdown Images in the response
-  // Example: ![image](https://...)
-  // We only take the FIRST image if multiple are returned.
-  const imgMatch = replyContent.match(/!\[.*?\]\((.*?)\)/);
+  // Extract ALL image URLs and format them nicely
+  const imgMatches = replyContent.matchAll(/!\[.*?\]\((.*?)\)/g);
+  const imageUrls: string[] = [];
 
-  if (imgMatch) {
-    const imgUrl = imgMatch[1];
-    console.log('Detected image URL in response:', imgUrl);
-
-    // Try to upload to WeChat to send as native Image
-    mediaId = await uploadTempMedia(imgUrl);
-
-    if (!mediaId) {
-      // Fallback: Format the text nicely with clickable link
-      console.log('Image upload failed, falling back to text with URL');
-      replyContent = `【图片已生成】\n\n由于网络原因，暂时无法直接发送图片。\n\n请点击查看：${imgUrl}`;
-    } else {
-      // Successfully uploaded, will send as image
-      console.log('Image uploaded successfully, media_id:', mediaId);
-    }
+  for (const match of imgMatches) {
+    imageUrls.push(match[1]);
   }
 
-  // Construct Reply Object
-  if (mediaId) {
-    return { type: 'image', mediaId };
-  } else {
-    return { type: 'text', content: replyContent };
+  if (imageUrls.length > 0) {
+    console.log(`Detected ${imageUrls.length} image URL(s) in response`);
+
+    // Format a nice text response with all image links
+    // Remove the markdown syntax and create a clean message
+    let cleanText = '【图片生成完成】\n\n';
+
+    imageUrls.forEach((url, index) => {
+      cleanText += `📷 图片${index + 1}：${url}\n\n`;
+    });
+
+    cleanText += '💡 提示：点击链接即可查看和下载图片';
+
+    replyContent = cleanText;
+    console.log('Formatted response with', imageUrls.length, 'image links');
   }
+
+  // Construct Reply Object (always return text for now, since image upload is unreliable)
+  return { type: 'text', content: replyContent };
 };

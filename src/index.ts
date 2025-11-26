@@ -5,6 +5,7 @@ import * as WeChatService from './services/wechatService';
 // Extend global type
 declare global {
   var processedMsgIds: Set<string>;
+  var responseCache: Map<string, { reply: any, timestamp: number }>;
 }
 
 const app = express();
@@ -57,6 +58,11 @@ app.post('/', async (req: Request, res: Response) => {
     global.processedMsgIds = new Set<string>();
   }
 
+  // Response Cache for timeout scenarios
+  if (!global.responseCache) {
+    global.responseCache = new Map<string, { reply: any, timestamp: number }>();
+  }
+
   try {
     // 1. Parse XML
     const result = await WeChatService.parseXML(xmlData);
@@ -66,6 +72,20 @@ app.post('/', async (req: Request, res: Response) => {
 
     const message = result.xml;
     const msgId = message.MsgId;
+
+    // Create a cache key based on user and message content
+    const textMsg = message as any;
+    const userMessage = textMsg.Content || '';
+    const cacheKey = `${message.FromUserName}:${userMessage.trim()}`;
+
+    // Check if we have a cached response for this exact query
+    const cached = global.responseCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < 300000)) { // Cache valid for 5 minutes
+      console.log('✓ Found cached response for:', userMessage.substring(0, 30));
+      const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, cached.reply);
+      res.type('application/xml');
+      return res.send(xmlResponse);
+    }
 
     if (msgId && global.processedMsgIds.has(msgId)) {
       console.log(`Duplicate message ${msgId} detected. Ignoring.`);
@@ -96,24 +116,45 @@ app.post('/', async (req: Request, res: Response) => {
     if (!timedOut && winner) {
       // Case A: AI finished BEFORE timeout
       console.log('✓ AI finished in time. Sending synchronous XML response.');
+
+      // Cache the successful response
+      global.responseCache.set(cacheKey, { reply: winner, timestamp: Date.now() });
+      // Clean up old cache entries (keep last 100)
+      if (global.responseCache.size > 100) {
+        const firstKey = global.responseCache.keys().next().value;
+        global.responseCache.delete(firstKey);
+      }
+
       const xmlResponse = WeChatService.replyToXml(message.FromUserName, message.ToUserName, winner as any);
       res.type('application/xml');
       res.send(xmlResponse);
     } else {
-      // Case B: Timeout happened OR AI failed to return valid data in time
-      console.log(`⏱ Processing exceeded ${CONFIG.TIMEOUT_MS}ms timeout. Using async reply.`);
-      res.send('success');
+      // Case B: Timeout happened - return a helpful message
+      console.log(`⏱ Processing exceeded ${CONFIG.TIMEOUT_MS}ms timeout.`);
 
-      // Handle Late Reply (Async)
-      // We wait for the AI promise to finish (if it hasn't already)
+      // Return a timeout message immediately
+      const timeoutReply: any = {
+        type: 'text',
+        content: '🔄 您的请求正在处理中...\n\n⏱ 图片生成需要较长时间\n\n💡 请在10-20秒后，重新发送相同的消息（直接复制粘贴），即可立即获取生成的图片链接！'
+      };
+
+      const xmlResponse = WeChatService.replyToXml(
+        message.FromUserName,
+        message.ToUserName,
+        timeoutReply
+      );
+      res.type('application/xml');
+      res.send(xmlResponse);
+
+      // Continue processing in background and cache the result
       aiPromise.then(async (reply) => {
-        console.log('AI Task Finished (Late):', reply?.type || 'no reply');
+        console.log('✓ AI Task Finished (Late):', reply?.type || 'no reply');
         if (reply) {
-          console.log('→ Sending via Custom Message API (async)...');
-          await WeChatService.sendCustomMessage(message.FromUserName, reply);
-          console.log('✓ Async message sent successfully');
-        } else {
-          console.warn('⚠ AI returned empty reply, skipping async message');
+          // Cache the result so user can retrieve it by resending
+          global.responseCache.set(cacheKey, { reply: reply, timestamp: Date.now() });
+          console.log('💾 Cached response for key:', cacheKey.substring(0, 50));
+          console.log('📝 Result preview:', reply.content?.substring(0, 100) || reply.mediaId);
+          console.log('✅ User can now resend the same message to get this result instantly');
         }
       }).catch(err => {
         console.error('✗ AI Task Failed in background:', err.message || err);
