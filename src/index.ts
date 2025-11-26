@@ -20,7 +20,7 @@ app.get('/', (req: Request, res: Response) => {
       return res.send(echostr);
     }
   }
-  
+
   console.log('Signature verification failed');
   return res.status(401).send('Invalid Signature');
 });
@@ -31,14 +31,14 @@ app.get('/', (req: Request, res: Response) => {
  */
 app.post('/', async (req: Request, res: Response) => {
   const { signature, timestamp, nonce, openid } = req.query;
-
+  console.log('Received message from WeChat:', req.body);
   // Security check (Optional but recommended)
   if (!WeChatService.validateSignature(signature as string, timestamp as string, nonce as string)) {
     return res.status(401).send('Invalid Signature');
   }
 
   const xmlData = req.body;
-  
+
   if (!xmlData) {
     return res.send('success');
   }
@@ -47,14 +47,14 @@ app.post('/', async (req: Request, res: Response) => {
     // 1. Parse XML
     const result = await WeChatService.parseXML(xmlData);
     if (!result || !result.xml) {
-      return res.send('success'); 
+      return res.send('success');
     }
 
     const message = result.xml;
 
     // 2. Process Message with AI (Race against timeout)
     // WeChat expects a response within 5 seconds.
-    
+
     // Create a promise that rejects after timeout safety margin
     const timeoutPromise = new Promise<string>((_, reject) => {
       setTimeout(() => reject(new Error('TIMEOUT')), CONFIG.TIMEOUT_MS);
@@ -66,7 +66,7 @@ app.post('/', async (req: Request, res: Response) => {
         WeChatService.processMessage(message),
         timeoutPromise
       ]);
-      
+
       // 3. Send XML Response
       res.type('application/xml');
       res.send(responseXml);

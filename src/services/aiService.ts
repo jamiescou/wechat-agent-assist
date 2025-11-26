@@ -14,23 +14,47 @@ const aiClient = axios.create({
 /**
  * Sends a chat message to the AI service.
  */
-export const chatWithAI = async (userMessage: string): Promise<string> => {
+/**
+ * Sends a chat message to the AI service.
+ * Supports text and optional image input (multimodal).
+ */
+export const chatWithAI = async (userMessage: string, imageUrl?: string): Promise<string> => {
   try {
+    const messages: any[] = [
+      { role: 'system', content: 'You are a helpful assistant serving a WeChat Official Account.' }
+    ];
+
+    if (imageUrl) {
+      // Multimodal Message
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: userMessage || 'Describe this image' },
+          { type: 'image_url', image_url: { url: imageUrl } }
+        ]
+      });
+    } else {
+      // Text Only Message
+      messages.push({ role: 'user', content: userMessage });
+    }
+
     const response = await aiClient.post<AIChatResponse>('/v1/chat/completions', {
-      model: 'doubao', // Using 'default' or a common model name like 'gpt-3.5-turbo'
-      messages: [
-        { role: 'system', content: 'You are a helpful assistant serving a WeChat Official Account.' },
-        { role: 'user', content: userMessage }
-      ],
+      model: 'doubao', // Ensure the model supports vision if imageUrl is provided
+      messages: messages,
       stream: false
     });
-	console.log('userMessage==', userMessage, response.data.choices[0].message)
+
+    console.log('userMessage==', userMessage, 'imageUrl==', imageUrl, response.data.choices[0].message);
+
     if (response.data && response.data.choices && response.data.choices.length > 0) {
       return response.data.choices[0].message.content;
     }
     return 'Error: AI returned an empty response.';
   } catch (error: any) {
     console.error('AI Chat Error:', error.message);
+    if (error.response) {
+      console.error('AI Response Data:', error.response.data);
+    }
     return 'Sorry, I encountered an error communicating with the AI service.';
   }
 };
