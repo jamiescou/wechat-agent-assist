@@ -59,6 +59,7 @@ app.post('/', async (req: Request, res: Response) => {
     // We wrap it to handle the "Late Reply" scenario
     const aiTask = WeChatService.processMessage(message).then(async (reply) => {
       if (!isResponseSent) {
+        console.log('Response sent successfully', reply);
         // If we haven't timed out, return the reply to the main flow
         return reply;
       } else {
