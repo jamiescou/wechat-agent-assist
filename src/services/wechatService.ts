@@ -76,7 +76,7 @@ let tokenExpiresAt: number = 0;
 const getAccessToken = async (): Promise<string> => {
   if (!CONFIG.WECHAT_APPID || !CONFIG.WECHAT_APPSECRET) return '';
   if (Date.now() < tokenExpiresAt) return accessToken;
-
+  console.log('getAccessToken==', accessToken);
   try {
     const url = `https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=${CONFIG.WECHAT_APPID}&secret=${CONFIG.WECHAT_APPSECRET}`;
     const res = await axios.get(url);
@@ -93,15 +93,17 @@ const getAccessToken = async (): Promise<string> => {
 };
 
 const uploadTempMedia = async (imageUrl: string): Promise<string> => {
+  console.log('uploadTempMedia==', imageUrl);
   if (!CONFIG.WECHAT_APPID || !CONFIG.WECHAT_APPSECRET) return '';
   const token = await getAccessToken();
+  console.log('uploadTempMedia==token=', token);
   if (!token) return '';
 
   try {
     // 1. Download the image
     const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
     const buffer = Buffer.from(imageResponse.data, 'binary');
-
+    console.log('uploadTempMedia==buffer=', buffer);
     // 2. Upload to WeChat
     // NOTE: In a real project, ensure 'form-data' is installed: npm install form-data
     // Here we will try to use it if available, or fail gracefully.
@@ -113,7 +115,7 @@ const uploadTempMedia = async (imageUrl: string): Promise<string> => {
     const res = await axios.post(uploadUrl, form, {
       headers: form.getHeaders()
     });
-
+    console.log('uploadTempMedia==res=', res.data);
     if (res.data.media_id) {
       return res.data.media_id;
     }
@@ -178,14 +180,17 @@ export const processMessage = async (msg: WeChatReceivedMessage): Promise<WeChat
   } else {
     replyContent = 'Unsupported message type.';
   }
-
+  console.log('replyContent==', replyContent);
   // Post-processing: Check for Markdown Images in the response
   // Example: ![image](https://...)
   const imgMatch = replyContent.match(/!\[.*?\]\((.*?)\)/);
+  console.log('imgMatch==', imgMatch);
   if (imgMatch) {
     const imgUrl = imgMatch[1];
+    console.log('imgUrl==', imgUrl, imgMatch[1]);
     // Try to upload to WeChat to send as native Image
     mediaId = await uploadTempMedia(imgUrl);
+    console.log('mediaId==', mediaId);
 
     if (!mediaId) {
       // Fallback: Format the text nicely

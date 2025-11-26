@@ -23,6 +23,8 @@ app.get('/', (req: Request, res: Response) => {
 
   console.log('Signature verification failed');
   return res.status(401).send('Invalid Signature');
+  // return res.status(200).send('It is work!');
+
 });
 
 /**
